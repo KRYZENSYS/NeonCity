@@ -1,0 +1,64 @@
+name: NeonCity CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ----- Lint Node.js server -----
+  server-lint:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: ./Server } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: Server/package-lock.json
+      - run: npm ci
+      - run: npm test --if-present
+
+  # ----- Build Linux player -----
+  unity-build-linux:
+    runs-on: ubuntu-latest
+    container:
+      image: unityci/editor:ubuntu-6000.0.23f1-base-3.1.0
+    steps:
+      - uses: actions/checkout@v4
+        with: { lfs: true }
+      - name: Build Linux64
+        run: |
+          mkdir -p build/Linux
+          /opt/unity/Editor/Unity \
+            -batchmode -quit -nographics \
+            -projectPath . \
+            -buildTarget Linux64 \
+            -executeMethod BuildScript.Linux64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NeonCity-Linux
+          path: build/Linux
+
+  # ----- Build WebGL -----
+  unity-build-webgl:
+    runs-on: ubuntu-latest
+    container:
+      image: unityci/editor:ubuntu-6000.0.23f1-webgl-3.1.0
+    steps:
+      - uses: actions/checkout@v4
+        with: { lfs: true }
+      - name: Build WebGL
+        run: |
+          mkdir -p build/WebGL
+          /opt/unity/Editor/Unity \
+            -batchmode -quit -nographics \
+            -projectPath . \
+            -buildTarget WebGL \
+            -executeMethod BuildScript.WebGL
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NeonCity-WebGL
+          path: build/WebGL
