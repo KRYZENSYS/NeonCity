@@ -1,0 +1,85 @@
+name: Deploy WebGL to GitHub Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: unityci/editor:ubuntu-6000.0.23f1-webgl-3.1.0
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          submodules: recursive
+
+      - name: Create BuildScript
+        run: |
+          mkdir -p Assets/Scripts/Editor
+          cat > Assets/Scripts/Editor/BuildScript.cs << 'EOF'
+          #if UNITY_EDITOR
+          using UnityEditor;
+          using UnityEditor.Build.Reporting;
+          using UnityEngine;
+          using System.IO;
+          public static class BuildScript {
+            public static void WebGL() {
+              Directory.CreateDirectory("build/WebGL");
+              var opts = new BuildPlayerOptions {
+                scenes = new[] {
+                  "Assets/Scenes/Bootstrap.unity",
+                  "Assets/Scenes/MainMenu.unity",
+                  "Assets/Scenes/City.unity",
+                },
+                locationPathName = "build/WebGL",
+                target = BuildTarget.WebGL,
+                options = BuildOptions.None
+              };
+              var report = BuildPipeline.BuildPlayer(opts);
+              Debug.Log($"[Build] result={report.summary.result} time={report.summary.totalTime}");
+            }
+          }
+          #endif
+          EOF
+
+      - name: Build WebGL
+        run: |
+          /opt/unity/Editor/Unity \
+            -batchmode -quit -nographics -accept-apiupdate \
+            -projectPath . \
+            -buildTarget WebGL \
+            -executeMethod BuildScript.WebGL \
+            -logFile -
+
+      - name: Prepare for Pages (rename template files)
+        run: |
+          cd build/WebGL
+          # Unity emits TemplateData — keep it
+          ls -la
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: build/WebGL
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
