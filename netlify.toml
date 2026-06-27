@@ -1,0 +1,55 @@
+# Netlify config — Unity WebGL deploy
+# https://docs.netlify.com/configure-builds/file-based-configuration/
+
+[build]
+  base    = "build/WebGL"
+  publish = "build/WebGL"
+  command = "echo 'WebGL build already produced by GitHub Actions'"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Headers — Unity WebGL needs these
+[[headers]]
+  for = "*.wasm"
+  [headers.values]
+    Content-Type = "application/wasm"
+
+[[headers]]
+  for = "*.data"
+  [headers.values]
+    Content-Type = "application/octet-stream"
+
+[[headers]]
+  for = "*.js"
+  [headers.values]
+    Content-Type = "application/javascript"
+
+[[headers]]
+  for = "*.symbols.json"
+  [headers.values]
+    Content-Type = "application/octet-stream"
+
+# Caching — Unity emits hashes; we cache aggressively
+[[headers]]
+  for = "/Build/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+[[headers]]
+  for = "/TemplateData/*"
+  [headers.values]
+    Cache-Control = "public, max-age=31536000, immutable"
+
+# Cross-Origin headers — required for SharedArrayBuffer
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cross-Origin-Embedder-Policy = "require-corp"
+    Cross-Origin-Opener-Policy   = "same-origin"
+
+# Redirects — SPA-friendly
+[[redirects]]
+  from = "/*"
+  to   = "/index.html"
+  status = 200
