@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: neoncity-server
+    runtime: node
+    rootDir: Server
+    plan: free
+    region: oregon
+    branch: main
+    buildCommand: npm install
+    startCommand: node server.js
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 20.11.0
+      - key: PORT
+        value: 10000
+      - key: FIREBASE_CREDENTIALS
+        sync: false
