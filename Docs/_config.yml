@@ -1,0 +1,11 @@
+# Jekyll config for GitHub Pages
+# https://docs.github.com/en/pages/setting-up-a-github-pages-site-with-jekyll
+
+title: NeonCity — Play in Browser
+description: Cyberpunk open-world multiplayer shooter. Free, browser-based.
+theme: minima
+
+# WebGL needs these headers; we set them in netlify.toml,
+# for GitHub Pages we rely on default browser behaviour.
+# WebGL 2.0 + SharedArrayBuffer require COOP/COEP — which Pages does not set.
+# Solution: WebGL works WITHOUT SharedArrayBuffer (slightly slower init).
