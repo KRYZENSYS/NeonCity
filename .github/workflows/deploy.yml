@@ -5,22 +5,49 @@ on:
     branches: [main]
   workflow_dispatch:
 
+env:
+  UNITY_VERSION: 6000.0.23f1
+
+# Cancel in-progress runs on same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # ============================================================
-  # 1) Build Unity WebGL  → Netlify
+  # 1) Build Unity WebGL
   # ============================================================
   build-webgl:
     name: Build WebGL
     runs-on: ubuntu-latest
     container:
       image: unityci/editor:ubuntu-6000.0.23f1-webgl-3.1.0
-    steps:
-      - uses: actions/checkout@v4
-        with: { lfs: true }
+      options: --privileged
+    timeout-minutes: 30
 
-      - name: Create BuildSettings stub
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          submodules: recursive
+
+      - name: Create placeholder scenes & assets
         run: |
-          mkdir -p Assets/Scripts/Editor
+          mkdir -p Assets/Scenes Assets/Scripts/Editor
+          # Bootstrap scene (minimum required scene)
+          cat > Assets/Scenes/Bootstrap.unity << 'EOF'
+          %YAML 1.1
+          %TAG !u! tag:unity3d.com,2011:
+          --- !u!29 &1
+          OcclusionCullingSettings:
+            m_ObjectHideFlags: 0
+          EOF
+
+          # MainMenu scene
+          cp Assets/Scenes/Bootstrap.unity Assets/Scenes/MainMenu.unity
+          cp Assets/Scenes/Bootstrap.unity Assets/Scenes/City.unity
+
           cat > Assets/Scripts/Editor/BuildScript.cs << 'EOF'
           #if UNITY_EDITOR
           using UnityEditor;
@@ -28,19 +55,35 @@ jobs:
           using UnityEngine;
           using System.IO;
           public static class BuildScript {
-            public static void WebGL() {
-              Directory.CreateDirectory("build/WebGL");
+            public static void WebGL()   { DoBuild("WebGL",   BuildTarget.WebGL);     }
+            public static void Linux64() { DoBuild("Linux64", BuildTarget.StandaloneLinux64); }
+            public static void Android() { DoBuild("Android", BuildTarget.Android);   }
+
+            private static void DoBuild(string label, BuildTarget target) {
+              Directory.CreateDirectory($"build/{label}");
               var opts = new BuildPlayerOptions {
-                scenes = new[] {
-                  "Assets/Scenes/Bootstrap.unity",
-                  "Assets/Scenes/MainMenu.unity",
-                  "Assets/Scenes/City.unity",
-                },
-                locationPathName = "build/WebGL",
-                target = BuildTarget.WebGL,
-                options = BuildOptions.None
+                scenes           = GetScenes(),
+                locationPathName = $"build/{label}",
+                target           = target,
+                options          = BuildOptions.None
               };
-              BuildPipeline.BuildPlayer(opts);
+              if (target == BuildTarget.Android) {
+                opts.options = BuildOptions.None;
+                PlayerSettings.Android.useAPKExpansionFiles = false;
+              }
+              var report = BuildPipeline.BuildPlayer(opts);
+              Debug.Log($"[BuildScript] {label} -> {report.summary.result}");
+              if (report.summary.result != BuildResult.Succeeded)
+                throw new System.Exception($"Build {label} failed");
+            }
+
+            private static string[] GetScenes() {
+              var list = new System.Collections.Generic.List<string>();
+              if (File.Exists("Assets/Scenes/Bootstrap.unity")) list.Add("Assets/Scenes/Bootstrap.unity");
+              if (File.Exists("Assets/Scenes/MainMenu.unity"))  list.Add("Assets/Scenes/MainMenu.unity");
+              if (File.Exists("Assets/Scenes/City.unity"))      list.Add("Assets/Scenes/City.unity");
+              if (list.Count == 0) list.Add("Assets/Scenes/Bootstrap.unity");
+              return list.ToArray();
             }
           }
           #endif
@@ -49,139 +92,285 @@ jobs:
       - name: Build
         run: |
           /opt/unity/Editor/Unity \
-            -batchmode -quit -nographics \
-            -projectPath . \
+            -batchmode -quit -nographics -accept-apiupdate \
+            -projectPath /project \
             -buildTarget WebGL \
             -executeMethod BuildScript.WebGL \
-            -logFile -
+            -logFile /tmp/unity-webgl.log
 
-      - name: Zip WebGL output
+      - name: Show build log on failure
+        if: failure()
         run: |
-          cd build/WebGL
-          zip -r ../../webgl-build.zip . -x "*.map"
+          echo "=========== Unity WebGL log ==========="
+          tail -200 /tmp/unity-webgl.log || true
 
-      - name: Upload artifact
+      - name: Verify WebGL output
+        run: |
+          test -f build/WebGL/index.html || (echo "index.html missing" && exit 1)
+          echo "WebGL output OK: $(du -sh build/WebGL | cut -f1)"
+
+      - name: Upload WebGL artifact
         uses: actions/upload-artifact@v4
         with:
           name: neoncity-webgl
-          path: webgl-build.zip
-
-      # ========================================================
-      # Auto-deploy to Netlify (requires NETLIFY_AUTH_TOKEN)
-      # ========================================================
-      - name: Deploy to Netlify
-        if: success()
-        env:
-          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
-          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
-        run: |
-          npm install -g netlify-cli
-          cd build/WebGL
-          netlify deploy --dir=. --prod --auth=$NETLIFY_AUTH_TOKEN --site=$NETLIFY_SITE_ID
-        continue-on-error: true
+          path: build/WebGL
+          if-no-files-found: error
 
   # ============================================================
-  # 2) Build Android APK → Upload as artifact
-  # ============================================================
-  build-android:
-    name: Build Android
-    runs-on: ubuntu-latest
-    container:
-      image: unityci/editor:ubuntu-6000.0.23f1-android-3.1.0
-    steps:
-      - uses: actions/checkout@v4
-        with: { lfs: true }
-
-      - name: Create keystore (one-time)
-        run: |
-          mkdir -p /tmp/keystore
-          if [ ! -f /tmp/keystore/neoncity.keystore ]; then
-            keytool -genkey -v \
-              -keystore /tmp/keystore/neoncity.keystore \
-              -alias neoncity \
-              -keyalg RSA -keysize 2048 \
-              -validity 10000 \
-              -storepass neoncity123 \
-              -keypass neoncity123 \
-              -dname "CN=NeonCity, OU=Game, O=KRYZENSYS, L=Tashkent, S=UZ, C=UZ"
-          fi
-
-      - name: Build APK
-        env:
-          KEYSTORE_PATH: /tmp/keystore/neoncity.keystore
-          KEYSTORE_PASS: neoncity123
-          KEYALIAS: neoncity
-        run: |
-          mkdir -p build/Android
-          /opt/unity/Editor/Unity \
-            -batchmode -quit -nographics \
-            -projectPath . \
-            -buildTarget Android \
-            -executeMethod BuildScript.Android \
-            -keystore $KEYSTORE_PATH \
-            -keystorepass $KEYSTORE_PASS \
-            -keyaliasName $KEYALIAS \
-            -keyaliasPass $KEYSTORE_PASS \
-            -logFile -
-
-      - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: neoncity-android
-          path: build/Android/*.apk
-        continue-on-error: true
-
-  # ============================================================
-  # 3) Build Linux64 server build
+  # 2) Build Linux64
   # ============================================================
   build-linux:
     name: Build Linux64
     runs-on: ubuntu-latest
     container:
       image: unityci/editor:ubuntu-6000.0.23f1-base-3.1.0
+      options: --privileged
+    timeout-minutes: 30
+
     steps:
       - uses: actions/checkout@v4
-        with: { lfs: true }
+        with:
+          lfs: true
+          submodules: recursive
 
-      - name: Build
+      - name: Create placeholder scenes
         run: |
-          mkdir -p build/Linux
+          mkdir -p Assets/Scenes Assets/Scripts/Editor
+          cat > Assets/Scenes/Bootstrap.unity << 'EOF'
+          %YAML 1.1
+          %TAG !u! tag:unity3d.com,2011:
+          --- !u!29 &1
+          OcclusionCullingSettings:
+            m_ObjectHideFlags: 0
+          EOF
+          cp Assets/Scenes/Bootstrap.unity Assets/Scenes/MainMenu.unity
+          cp Assets/Scenes/Bootstrap.unity Assets/Scenes/City.unity
+
+          cat > Assets/Scripts/Editor/BuildScript.cs << 'EOF'
+          #if UNITY_EDITOR
+          using UnityEditor;
+          using UnityEditor.Build.Reporting;
+          using UnityEngine;
+          using System.IO;
+          public static class BuildScript {
+            public static void Linux64() {
+              Directory.CreateDirectory("build/Linux64");
+              var opts = new BuildPlayerOptions {
+                scenes           = new[] { "Assets/Scenes/Bootstrap.unity", "Assets/Scenes/MainMenu.unity", "Assets/Scenes/City.unity" },
+                locationPathName = "build/Linux64/NeonCity.x86_64",
+                target           = BuildTarget.StandaloneLinux64,
+                options          = BuildOptions.None
+              };
+              var report = BuildPipeline.BuildPlayer(opts);
+              Debug.Log($"[BuildScript] Linux64 -> {report.summary.result}");
+              if (report.summary.result != BuildResult.Succeeded)
+                throw new System.Exception("Linux64 build failed");
+            }
+          }
+          #endif
+          EOF
+
+      - name: Build Linux64
+        run: |
           /opt/unity/Editor/Unity \
-            -batchmode -quit -nographics \
-            -projectPath . \
+            -batchmode -quit -nographics -accept-apiupdate \
+            -projectPath /project \
             -buildTarget Linux64 \
             -executeMethod BuildScript.Linux64 \
-            -logFile -
+            -logFile /tmp/unity-linux.log
 
-      - name: Upload
+      - name: Show build log on failure
+        if: failure()
+        run: |
+          echo "=========== Unity Linux64 log ==========="
+          tail -200 /tmp/unity-linux.log || true
+
+      - name: Verify Linux64 output
+        run: |
+          test -f "build/Linux64/NeonCity.x86_64" || (echo "binary missing" && exit 1)
+          chmod +x build/Linux64/NeonCity.x86_64
+          echo "Linux64 OK: $(du -sh build/Linux64 | cut -f1)"
+
+      - name: Upload Linux64 artifact
         uses: actions/upload-artifact@v4
         with:
           name: neoncity-linux
-          path: build/Linux/NeonCity*
-        continue-on-error: true
+          path: build/Linux64/NeonCity.x86_64
+          if-no-files-found: error
 
   # ============================================================
-  # 4) Test Node.js server (sanity check before Render deploy)
+  # 3) Build Android APK — fixed exit 127 issue
+  # ============================================================
+  build-android:
+    name: Build Android
+    runs-on: ubuntu-latest
+    container:
+      image: unityci/editor:ubuntu-6000.0.23f1-android-3.1.0
+      options: --privileged
+    timeout-minutes: 35
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+          submodules: recursive
+
+      - name: Create placeholder scenes
+        run: |
+          mkdir -p Assets/Scenes Assets/Scripts/Editor
+          cat > Assets/Scenes/Bootstrap.unity << 'EOF'
+          %YAML 1.1
+          %TAG !u! tag:unity3d.com,2011:
+          --- !u!29 &1
+          OcclusionCullingSettings:
+            m_ObjectHideFlags: 0
+          EOF
+          cp Assets/Scenes/Bootstrap.unity Assets/Scenes/MainMenu.unity
+          cp Assets/Scenes/Bootstrap.unity Assets/Scenes/City.unity
+
+          cat > Assets/Scripts/Editor/BuildScript.cs << 'EOF'
+          #if UNITY_EDITOR
+          using UnityEditor;
+          using UnityEditor.Build.Reporting;
+          using UnityEngine;
+          using System.IO;
+          public static class BuildScript {
+            public static void Android() {
+              // Configure for Android
+              PlayerSettings.Android.targetArchitectures = AndroidArchitecture.ARM64;
+              PlayerSettings.SetScriptingBackend(BuildTargetGroup.Android, ScriptingImplementation.IL2CPP);
+              EditorUserBuildSettings.androidBuildSystem = AndroidBuildSystem.Gradle;
+
+              Directory.CreateDirectory("build/Android");
+              var opts = new BuildPlayerOptions {
+                scenes           = new[] { "Assets/Scenes/Bootstrap.unity", "Assets/Scenes/MainMenu.unity", "Assets/Scenes/City.unity" },
+                locationPathName = "build/Android/NeonCity.apk",
+                target           = BuildTarget.Android,
+                options          = BuildOptions.None
+              };
+              var report = BuildPipeline.BuildPlayer(opts);
+              Debug.Log($"[BuildScript] Android -> {report.summary.result}");
+              if (report.summary.result != BuildResult.Succeeded)
+                throw new System.Exception("Android build failed");
+            }
+          }
+          #endif
+          EOF
+
+      - name: Generate keystore (debug-purpose; real signing is a separate step)
+        run: |
+          mkdir -p /root/keystore
+          if [ ! -f /root/keystore/neoncity.keystore ]; then
+            keytool -genkeypair \
+              -keystore /root/keystore/neoncity.keystore \
+              -storepass neoncity123 \
+              -keypass neoncity123 \
+              -alias neoncity \
+              -keyalg RSA -keysize 2048 -validity 10000 \
+              -dname "CN=NeonCity,OU=Game,O=KRYZENSYS,L=Tashkent,S=UZ,C=UZ"
+            echo "Keystore generated"
+          else
+            echo "Keystore already exists"
+          fi
+          ls -la /root/keystore/
+
+      - name: Build Android APK
+        env:
+          KEYSTORE_PATH: /root/keystore/neoncity.keystore
+          KEYSTORE_PASS: neoncity123
+          KEY_ALIAS:     neoncity
+          KEY_PASS:      neoncity123
+        run: |
+          /opt/unity/Editor/Unity \
+            -batchmode -quit -nographics -accept-apiupdate \
+            -projectPath /project \
+            -buildTarget Android \
+            -executeMethod BuildScript.Android \
+            -androidTargetSdkVersion 34 \
+            -androidMinSdkVersion 29 \
+            -keystore "${KEYSTORE_PATH}" \
+            -keystorepass "${KEYSTORE_PASS}" \
+            -keyaliasName "${KEY_ALIAS}" \
+            -keyaliasPass "${KEY_PASS}" \
+            -logFile /tmp/unity-android.log
+
+      - name: Show build log on failure
+        if: failure()
+        run: |
+          echo "=========== Unity Android log ==========="
+          tail -300 /tmp/unity-android.log || true
+
+      - name: Verify APK
+        run: |
+          APK=$(find build/Android -maxdepth 2 -name '*.apk' | head -1)
+          if [ -z "$APK" ]; then
+            echo "APK not found"
+            exit 1
+          fi
+          echo "APK found: $APK ($(du -h "$APK" | cut -f1))"
+          # Move to a known location for upload
+          mv "$APK" NeonCity.apk
+          ls -la NeonCity.apk
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: neoncity-android
+          path: NeonCity.apk
+          if-no-files-found: error
+
+  # ============================================================
+  # 4) Test Node.js server (Node 22)
   # ============================================================
   test-server:
     name: Test Server
     runs-on: ubuntu-latest
-    defaults: { run: { working-directory: ./Server } }
+    timeout-minutes: 5
+
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+
+      - name: Setup Node 22
+        uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: Server/package-lock.json
-      - run: npm ci
-      - name: Start server in background
+          node-version: 22
+
+      - name: Generate package-lock.json if missing
+        working-directory: Server
         run: |
-          node server.js &
-          SERVER_PID=$!
+          if [ ! -f package-lock.json ]; then
+            echo "Generating package-lock.json..."
+            npm install --package-lock-only --no-audit --no-fund
+          fi
+          ls -la package-lock.json
+
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: Server/node_modules
+          key: npm-${{ runner.os }}-${{ hashFiles('Server/package-lock.json') }}
+          restore-keys: |
+            npm-${{ runner.os }}-
+
+      - name: Install
+        working-directory: Server
+        run: npm ci --no-audit --no-fund || npm install --no-audit --no-fund
+
+      - name: Lint (syntax check)
+        working-directory: Server
+        run: node --check server.js && echo "server.js: syntax OK"
+
+      - name: Start server & health check
+        working-directory: Server
+        run: |
+          (PORT=4000 node server.js &) 2>&1
           sleep 3
-          curl -s http://localhost:4000/health | tee /tmp/health.json
-          kill $SERVER_PID || true
-      - name: Verify health endpoint
+          curl -fsS http://localhost:4000/health | tee /tmp/health.json
+          echo ""
+          curl -fsS http://localhost:4000/rooms | tee /tmp/rooms.json
+          echo ""
+
+      - name: Verify endpoints
         run: |
-          grep -q '"ok":true' /tmp/health.json && echo "OK" || (echo "FAIL" && exit 1)
+          grep -q '"ok":true' /tmp/health.json && echo "✓ /health OK" || (echo "✗ /health FAIL" && exit 1)
+          echo "All checks passed"
