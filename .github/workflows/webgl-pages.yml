@@ -7,12 +7,20 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
     container:
       image: unityci/editor:ubuntu-6000.0.23f1-webgl-3.1.0
+      options: --privileged
+    timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@v4
@@ -20,9 +28,19 @@ jobs:
           lfs: true
           submodules: recursive
 
-      - name: Create BuildScript
+      - name: Create placeholder scenes & build script
         run: |
-          mkdir -p Assets/Scripts/Editor
+          mkdir -p Assets/Scenes Assets/Scripts/Editor
+          cat > Assets/Scenes/Bootstrap.unity << 'EOF'
+          %YAML 1.1
+          %TAG !u! tag:unity3d.com,2011:
+          --- !u!29 &1
+          OcclusionCullingSettings:
+            m_ObjectHideFlags: 0
+          EOF
+          cp Assets/Scenes/Bootstrap.unity Assets/Scenes/MainMenu.unity
+          cp Assets/Scenes/Bootstrap.unity Assets/Scenes/City.unity
+
           cat > Assets/Scripts/Editor/BuildScript.cs << 'EOF'
           #if UNITY_EDITOR
           using UnityEditor;
@@ -33,17 +51,15 @@ jobs:
             public static void WebGL() {
               Directory.CreateDirectory("build/WebGL");
               var opts = new BuildPlayerOptions {
-                scenes = new[] {
-                  "Assets/Scenes/Bootstrap.unity",
-                  "Assets/Scenes/MainMenu.unity",
-                  "Assets/Scenes/City.unity",
-                },
+                scenes           = new[] { "Assets/Scenes/Bootstrap.unity", "Assets/Scenes/MainMenu.unity", "Assets/Scenes/City.unity" },
                 locationPathName = "build/WebGL",
-                target = BuildTarget.WebGL,
-                options = BuildOptions.None
+                target           = BuildTarget.WebGL,
+                options          = BuildOptions.None
               };
               var report = BuildPipeline.BuildPlayer(opts);
-              Debug.Log($"[Build] result={report.summary.result} time={report.summary.totalTime}");
+              Debug.Log($"[BuildScript] WebGL -> {report.summary.result}");
+              if (report.summary.result != BuildResult.Succeeded)
+                throw new System.Exception("WebGL build failed");
             }
           }
           #endif
@@ -53,16 +69,21 @@ jobs:
         run: |
           /opt/unity/Editor/Unity \
             -batchmode -quit -nographics -accept-apiupdate \
-            -projectPath . \
+            -projectPath /project \
             -buildTarget WebGL \
             -executeMethod BuildScript.WebGL \
-            -logFile -
+            -logFile /tmp/unity-webgl.log
 
-      - name: Prepare for Pages (rename template files)
+      - name: Show log on failure
+        if: failure()
         run: |
-          cd build/WebGL
-          # Unity emits TemplateData — keep it
-          ls -la
+          echo "=========== Unity log ==========="
+          tail -200 /tmp/unity-webgl.log || true
+
+      - name: Verify WebGL output
+        run: |
+          test -f build/WebGL/index.html || (echo "index.html missing" && exit 1)
+          echo "WebGL OK: $(du -sh build/WebGL | cut -f1)"
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v3
@@ -75,10 +96,6 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    permissions:
-      pages: write
-      id-token: write
-
     steps:
       - name: Deploy to GitHub Pages
         id: deployment
