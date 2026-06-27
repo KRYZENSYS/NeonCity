@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>NeonCity — Play in Browser</title>
+  <meta name="description" content="Cyberpunk open-world multiplayer shooter. Play free in your browser.">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='80' font-size='80'%3E%F0%9F%8E%AE%3C/text%3E%3C/svg%3E">
+
+  <!-- Cyberpunk font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@400;500;600&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --neon-cyan: #00f0ff;
+      --neon-pink: #ff00aa;
+      --neon-purple: #b400ff;
+      --bg-dark: #050018;
+      --bg-card: rgba(20, 0, 40, 0.7);
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body {
+      width: 100%; height: 100%;
+      background: var(--bg-dark);
+      color: #fff;
+      font-family: 'Rajdhani', sans-serif;
+      overflow-x: hidden;
+    }
+    body {
+      background:
+        radial-gradient(ellipse at top, rgba(180,0,255,0.25), transparent 50%),
+        radial-gradient(ellipse at bottom, rgba(0,240,255,0.18), transparent 50%),
+        linear-gradient(180deg, #050018 0%, #0a0028 50%, #050018 100%);
+      min-height: 100vh;
+    }
+    /* Animated grid background */
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background-image:
+        linear-gradient(rgba(0,240,255,0.08) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,240,255,0.08) 1px, transparent 1px);
+      background-size: 50px 50px;
+      animation: gridMove 20s linear infinite;
+      pointer-events: none;
+      z-index: 0;
+    }
+    @keyframes gridMove {
+      0% { transform: perspective(500px) rotateX(60deg) translateY(0); }
+      100% { transform: perspective(500px) rotateX(60deg) translateY(50px); }
+    }
+
+    .container {
+      position: relative;
+      z-index: 1;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 40px 20px;
+    }
+
+    /* Header */
+    .hero {
+      text-align: center;
+      padding: 60px 0 40px;
+    }
+    .hero h1 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: clamp(3rem, 10vw, 7rem);
+      font-weight: 900;
+      letter-spacing: 4px;
+      background: linear-gradient(135deg, var(--neon-cyan), var(--neon-pink), var(--neon-purple));
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      text-shadow: 0 0 80px rgba(0,240,255,0.3);
+      margin-bottom: 10px;
+      animation: glowPulse 3s ease-in-out infinite;
+    }
+    @keyframes glowPulse {
+      0%, 100% { filter: drop-shadow(0 0 20px rgba(0,240,255,0.4)); }
+      50%      { filter: drop-shadow(0 0 40px rgba(255,0,170,0.5)); }
+    }
+    .hero .subtitle {
+      font-size: 1.4rem;
+      color: rgba(255,255,255,0.7);
+      letter-spacing: 8px;
+      text-transform: uppercase;
+    }
+
+    /* CTA buttons */
+    .cta-row {
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin: 40px 0;
+    }
+    .btn {
+      display: inline-block;
+      padding: 18px 40px;
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: 3px;
+      text-decoration: none;
+      text-transform: uppercase;
+      border: 2px solid var(--neon-cyan);
+      background: transparent;
+      color: var(--neon-cyan);
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+      transition: all 0.3s;
+    }
+    .btn::before {
+      content: '';
+      position: absolute;
+      top: 0; left: -100%;
+      width: 100%; height: 100%;
+      background: linear-gradient(90deg, transparent, rgba(0,240,255,0.3), transparent);
+      transition: left 0.5s;
+    }
+    .btn:hover {
+      background: var(--neon-cyan);
+      color: var(--bg-dark);
+      box-shadow: 0 0 30px var(--neon-cyan), inset 0 0 30px rgba(0,0,0,0.2);
+      transform: translateY(-3px);
+    }
+    .btn:hover::before { left: 100%; }
+    .btn.primary {
+      border-color: var(--neon-pink);
+      color: var(--neon-pink);
+      background: rgba(255,0,170,0.05);
+    }
+    .btn.primary:hover {
+      background: var(--neon-pink);
+      color: #fff;
+      box-shadow: 0 0 40px var(--neon-pink);
+    }
+
+    /* Feature cards */
+    .features {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 24px;
+      margin: 60px 0;
+    }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid rgba(0,240,255,0.3);
+      padding: 30px;
+      backdrop-filter: blur(10px);
+      transition: all 0.3s;
+      position: relative;
+    }
+    .card::before {
+      content: '';
+      position: absolute;
+      top: -1px; left: -1px;
+      width: 30px; height: 30px;
+      border-top: 2px solid var(--neon-pink);
+      border-left: 2px solid var(--neon-pink);
+    }
+    .card::after {
+      content: '';
+      position: absolute;
+      bottom: -1px; right: -1px;
+      width: 30px; height: 30px;
+      border-bottom: 2px solid var(--neon-cyan);
+      border-right: 2px solid var(--neon-cyan);
+    }
+    .card:hover {
+      transform: translateY(-5px);
+      border-color: var(--neon-pink);
+      box-shadow: 0 10px 40px rgba(255,0,170,0.3);
+    }
+    .card .icon { font-size: 3rem; margin-bottom: 16px; }
+    .card h3 {
+      font-family: 'Orbitron', sans-serif;
+      font-size: 1.3rem;
+      color: var(--neon-cyan);
+      margin-bottom: 12px;
+      letter-spacing: 2px;
+    }
+    .card p { color: rgba(255,255,255,0.75); line-height: 1.6; }
+
+    /* Game container */
+    #game {
+      width: 100%;
+      height: 75vh;
+      min-height: 600px;
+      background: #000;
+      border: 2px solid var(--neon-cyan);
+      margin: 40px 0;
+      position: relative;
+      box-shadow: 0 0 60px rgba(0,240,255,0.3);
+    }
+    #game iframe {
+      width: 100%; height: 100%;
+      border: 0;
+      display: block;
+    }
+    #game-launch {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 24px;
+      background:
+        linear-gradient(rgba(5,0,24,0.8), rgba(5,0,24,0.95)),
+        radial-gradient(circle, rgba(180,0,255,0.3), transparent);
+    }
+    #game-launch .big-play {
+      width: 120px; height: 120px;
+      border: 3px solid var(--neon-cyan);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 3rem;
+      cursor: pointer;
+      transition: all 0.3s;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    #game-launch .big-play:hover {
+      transform: scale(1.1);
+      background: var(--neon-cyan);
+      color: var(--bg-dark);
+    }
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(0,240,255,0.7); }
+      50%      { box-shadow: 0 0 0 30px rgba(0,240,255,0); }
+    }
+
+    /* System info */
+    .specs {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 16px;
+      margin: 40px 0;
+      font-size: 0.9rem;
+    }
+    .spec {
+      background: rgba(0,0,0,0.4);
+      padding: 16px;
+      border-left: 3px solid var(--neon-cyan);
+    }
+    .spec strong { color: var(--neon-cyan); display: block; margin-bottom: 4px; }
+
+    /* Footer */
+    footer {
+      margin-top: 60px;
+      padding: 30px 0;
+      border-top: 1px solid rgba(0,240,255,0.2);
+      text-align: center;
+      color: rgba(255,255,255,0.5);
+      font-size: 0.9rem;
+    }
+    footer a { color: var(--neon-cyan); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+
+    /* Mobile tweaks */
+    @media (max-width: 600px) {
+      .hero { padding: 30px 0 20px; }
+      .hero .subtitle { letter-spacing: 4px; font-size: 1rem; }
+      #game { height: 60vh; min-height: 400px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+
+    <!-- HERO -->
+    <section class="hero">
+      <h1>NEONCITY</h1>
+      <p class="subtitle">Cyberpunk Open World · Multiplayer Shooter</p>
+    </section>
+
+    <!-- FEATURES -->
+    <section class="features">
+      <div class="card">
+        <div class="icon">🌃</div>
+        <h3>OPEN WORLD</h3>
+        <p>Massive cyberpunk metropolis. Drive, hack, fight, explore.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🎮</div>
+        <h3>PLAY IN BROWSER</h3>
+        <p>No download. No install. Click and play instantly on any device.</p>
+      </div>
+      <div class="card">
+        <div class="icon">⚔️</div>
+        <h3>MULTIPLAYER</h3>
+        <p>Up to 16 players. Voice chat. Real-time combat with anti-cheat.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🏎️</div>
+        <h3>VEHICLES</h3>
+        <p>Cars, bikes, helicopters. Fully drivable physics-based.</p>
+      </div>
+      <div class="card">
+        <div class="icon">🧠</div>
+        <h3>SMART AI</h3>
+        <p>Behavior Tree NPCs with perception, cover-taking, and squad tactics.</p>
+      </div>
+      <div class="card">
+        <div class="icon">💎</div>
+        <h3>NO PAY-TO-WIN</h3>
+        <p>100% cosmetic monetization. Battle Pass with 100 tiers of rewards.</p>
+      </div>
+    </section>
+
+    <!-- GAME -->
+    <section id="game">
+      <div id="game-launch">
+        <div class="big-play" onclick="launchGame()">▶</div>
+        <p style="font-family: 'Orbitron'; letter-spacing: 4px; color: var(--neon-cyan);">
+          CLICK TO START
+        </p>
+        <p style="font-size: 0.85rem; opacity: 0.6; max-width: 360px; text-align: center;">
+          Loading takes 10–30 seconds on first play (≈150 MB cache).
+          Click the icon above to launch.
+        </p>
+      </div>
+    </section>
+
+    <!-- SPECS -->
+    <section class="specs">
+      <div class="spec"><strong>Engine</strong>Unity 6 (URP)</div>
+      <div class="spec"><strong>Platform</strong>WebGL 2.0</div>
+      <div class="spec"><strong>Multiplayer</strong>Socket.IO over WSS</div>
+      <div class="spec"><strong>Save</strong>Local + Firebase cloud</div>
+      <div class="spec"><strong>Controls</strong>WASD + Mouse + Touch</div>
+      <div class="spec"><strong>Voice</strong>WebRTC (in-game)</div>
+    </section>
+
+    <!-- CTA -->
+    <section style="text-align:center; margin: 60px 0;">
+      <h2 style="font-family:'Orbitron'; font-size:2rem; margin-bottom:24px; letter-spacing:4px;">
+        READY TO JACK IN?
+      </h2>
+      <div class="cta-row">
+        <button class="btn primary" onclick="launchGame()">▶ PLAY NOW</button>
+        <a class="btn" href="https://github.com/KRYZENSYS/NeonCity" target="_blank">
+          ⌨ GITHUB
+        </a>
+        <a class="btn" href="Docs/DEPLOY.md" target="_blank">
+          📖 DOCS
+        </a>
+      </div>
+    </section>
+
+    <footer>
+      <p>
+        Built with 💜 by <a href="https://github.com/KRYZENSYS">KRYZENSYS</a>
+        · <a href="https://github.com/KRYZENSYS/NeonCity/blob/main/LICENSE">MIT License</a>
+        · <a href="https://github.com/KRYZENSYS/NeonCity/issues">Report a bug</a>
+      </p>
+    </footer>
+  </div>
+
+  <script>
+    // Lazy-load Unity WebGL iframe
+    function launchGame() {
+      const game = document.getElementById('game');
+      const launch = document.getElementById('game-launch');
+      if (launch) {
+        launch.remove();
+        const iframe = document.createElement('iframe');
+        iframe.src = 'Build/index.html';
+        iframe.allow = 'autoplay; fullscreen; microphone; camera; xr-spatial-tracking; gamepad';
+        iframe.allowFullscreen = true;
+        iframe.style.cssText = 'width:100%; height:100%; border:0;';
+        game.appendChild(iframe);
+      }
+    }
+
+    // Optional: preload after user scroll
+    const observer = new IntersectionObserver(entries => {
+      entries.forEach(e => {
+        if (e.isIntersecting && !window._gamePreloaded) {
+          window._gamePreloaded = true;
+          // Hint browser to prefetch
+          const link = document.createElement('link');
+          link.rel = 'prefetch';
+          link.href = 'Build/index.html';
+          document.head.appendChild(link);
+        }
+      });
+    });
+    observer.observe(document.getElementById('game'));
+
+    // Open links in new tab
+    document.querySelectorAll('a[href^="http"]').forEach(a => {
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+    });
+  </script>
+</body>
+</html>
